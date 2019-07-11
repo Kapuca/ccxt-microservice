@@ -1,4 +1,4 @@
-ccxt==1.17.210
-tornado==4.5.3
+ccxt==1.18.924
+tornado==6.0.3
 pyyaml
 requests
