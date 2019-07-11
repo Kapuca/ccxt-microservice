@@ -1,18 +1,15 @@
 import asyncio
-import ccxt
 import ccxt.async_support
 import json
 import tornado.httpserver
 import tornado.ioloop
 import tornado.options
 import tornado.web
-import unicodedata
 import sys
 from typing import List
 import yaml
 
 from tornado.options import define, options
-
 
 define("port", default=5000, help="run on the given port", type=int)
 define("apikeys", default="", help="apiKeys and secrets.", type=str)
@@ -43,18 +40,11 @@ class Application(tornado.web.Application):
         self.apikeys = apikeys
 
 
-def get_module(module:str):
+def get_module(module: str):
     return sys.modules[module].__dict__
 
 
-def get_ccxt_class(exchange:str):
-    module = get_module("ccxt")
-    if exchange not in module:
-        raise ValueError("Invalid exchange %s" % exchange)
-    return module[exchange]
-
-
-def get_async_ccxt_class(exchange:str):
+def get_async_ccxt_class(exchange: str):
     module = get_module("ccxt.async_support")
     if exchange not in module:
         raise ValueError("Invalid exchange %s" % exchange)
@@ -71,17 +61,17 @@ class BaseHandler(tornado.web.RequestHandler):
 
     @property
     def exchanges(self):
-        return self.application.exchanges
+        return self.application.async_exchanges
 
     def get_apikey(self, exchange):
         """Get apiKey and secret for an exchange. Returns empty dict if not available.
         """
         return self.application.apikeys.get(exchange, {})
 
-    def get_ccxt_class(self, exchange:str):
-        return get_ccxt_class(exchange)
+    def get_ccxt_class(self, exchange: str):
+        return get_async_ccxt_class(exchange)
 
-    def get_exchange(self, exchange:str):
+    def get_exchange(self, exchange: str):
         if exchange not in self.exchanges:
             cls = self.get_ccxt_class(exchange)
             if options.nonce_msec:
@@ -91,23 +81,9 @@ class BaseHandler(tornado.web.RequestHandler):
         return self.exchanges[exchange]
 
 
-class SyncBaseHandler(BaseHandler):
-    pass
+class ExchangeAPIHandler(BaseHandler):
 
-
-class AsyncBaseHandler(BaseHandler):
-
-    @property
-    def exchanges(self):
-        return self.application.async_exchanges
-
-    def get_ccxt_class(self, exchange:str):
-        return get_async_ccxt_class(exchange)
-
-
-class ExchangeAPIHandler(SyncBaseHandler):
-
-    def post(self, exchange, method):
+    async def post(self, exchange, method):
         ex = self.get_exchange(exchange)
 
         if len(self.request.body) > 0:
@@ -115,50 +91,42 @@ class ExchangeAPIHandler(SyncBaseHandler):
         else:
             request = {}
         func = getattr(ex, method)
-        result = func(**request)
+        result = await func(**request)
 
         self.write(json.dumps(result))
 
 
-async def parallel_run(async_callable, params:List[dict]):
+async def parallel_run(async_callable, params: List[dict]):
     cors = [async_callable(**param) for param in params]
     results = await asyncio.gather(*cors)
     return results
 
 
-class ParallelExchangeAPIHandler(AsyncBaseHandler):
+class ParallelExchangeAPIHandler(BaseHandler):
 
-    def post(self, name:str, method:str):
-        request = json.loads(self.request.body)
+    async def post(self, name: str, method: str):
+        params = json.loads(self.request.body)
 
         exchange = self.get_exchange(name)
-        params = request
         async_callable = getattr(exchange, method)
 
-        loop = asyncio.get_event_loop()
-        results = loop.run_until_complete(
-            parallel_run(async_callable, params)
-        )
+        results = await parallel_run(async_callable, params)
         self.write(json.dumps(results))
 
 
-class ParallelFetchOrderBooks(AsyncBaseHandler):
+class ParallelFetchOrderBooks(BaseHandler):
 
-    def post(self, name:str):
+    async def post(self, name: str):
         exchange = self.get_exchange(name)
 
         request = json.loads(self.request.body)
 
         # TODO validation
         symbols = request["symbols"]
-        params =[
-            {"symbol":symbol, "params":request.get("params",{})} for symbol in symbols
+        params = [
+            {"symbol": symbol, "params": request.get("params", {})} for symbol in symbols
         ]
-
-        loop = asyncio.get_event_loop()
-        order_books = loop.run_until_complete(
-            parallel_run(exchange.fetch_order_book, params)
-        )
+        order_books = await parallel_run(exchange.fetch_order_book, params)
         response = {
             symbol: order_book for symbol, order_book in zip(symbols, order_books)
         }
@@ -174,4 +142,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
