@@ -4,12 +4,12 @@ from datetime import datetime
 
 class Bucket:
 
-    def __init__(self, size, refRate, startFill=0):
+    def __init__(self, size, refRate, startFill=0, raced=False):
         self.maxSize = size
         self.refRate = refRate
         self.__startSize = startFill
         self.__startTs = datetime.now().timestamp()
-        self.lock = asyncio.Lock()
+        self.lock = asyncio.Lock() if not raced else None
 
     def state(self):
         return max(self.__startSize - self._deltaFill(), 0)
@@ -37,9 +37,20 @@ class Bucket:
         return max(fill + self.state() - self.maxSize, 0)/self.refRate
 
     async def add(self, fill):
-        async with self.lock:
+        await self.wait(fill)
+        return self.push(fill)
+
+    async def wait(self, fill):
+        if self.lock:
+            async with self.lock:
+                await self.__wait(fill)
+        else:
+            await self.__wait(fill)
+
+    async def __wait(self, fill):
+        delay = self.timeToWait(fill)
+        while delay != 0:
+            await asyncio.sleep(delay)
             delay = self.timeToWait(fill)
-            while delay != 0:
-                await asyncio.sleep(delay)
-                delay = self.timeToWait(fill)
-            return self.push(fill)
+
+
