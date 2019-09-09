@@ -38,15 +38,15 @@ class Connector:
 
     def __new__(cls, exchange, *args, **kwargs):
         if exchange in cls.__connectorsDict.keys():
-            for conn in cls.__connectorsDict[exchange].values():
+            for conn in cls.__connectorsDict[exchange]:
                 if conn.key == kwargs.get('key', None):
                     return conn
-            instance = cls.__init__(exchange, *args, **kwargs)
+            instance = super().__new__(cls)
             cls.__connectorsDict[exchange].append(instance)
             return instance
 
         if exchange in ccxt.exchanges:
-            instance = cls.__init__(exchange, *args, **kwargs)
+            instance = super().__new__(cls)
             cls.__connectorsDict[exchange] = [instance]
             return instance
         else:
