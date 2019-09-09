@@ -1,15 +1,16 @@
 import asyncio
-import ccxt.async_support
 import json
 import tornado.httpserver
 import tornado.ioloop
 import tornado.options
 import tornado.web
+import tornado.websocket
 import sys
-from typing import List
+from typing import List, Union, Optional, Awaitable
 import yaml
 
 from tornado.options import define, options
+from ccxt_microservice.connector import Connector
 
 define("port", default=5000, help="run on the given port", type=int)
 define("apikeys", default="", help="apiKeys and secrets.", type=str)
@@ -24,6 +25,7 @@ class Application(tornado.web.Application):
             (r"/([^/]+)/([^/]+)", ExchangeAPIHandler),
             (r"/parallel/([^/]+)/([^/]+)", ParallelExchangeAPIHandler),
             (r"/parallel/method/fetch_order_books/([^/]+)", ParallelFetchOrderBooks),
+            (r"/async/fetch/", AsyncFetchAPIHandler),
         ]
         settings = dict(
             debug=True,
@@ -84,34 +86,34 @@ class BaseHandler(tornado.web.RequestHandler):
 class ExchangeAPIHandler(BaseHandler):
 
     async def post(self, exchange, method):
-        ex = self.get_exchange(exchange)
+        ex = Connector(exchange)
 
         if len(self.request.body) > 0:
             request = json.loads(self.request.body)
         else:
             request = {}
-        func = getattr(ex, method)
-        result = await func(**request)
+        result = await ex.request(method, **request)
 
         self.write(json.dumps(result))
 
 
 async def parallel_run(async_callable, params: List[dict]):
-    cors = [async_callable(**param) for param in params]
-    results = await asyncio.gather(*cors)
-    return results
+    return asyncio.gather(async_callable(**param) for param in params)
 
 
 class ParallelExchangeAPIHandler(BaseHandler):
 
     async def post(self, name: str, method: str):
-        params = json.loads(self.request.body)
-
+        print(self.request.body)
+        if self.request.body:
+            params = json.loads(self.request.body)
+        else:
+            params = {}
         exchange = self.get_exchange(name)
         async_callable = getattr(exchange, method)
 
         results = await parallel_run(async_callable, params)
-        self.write(json.dumps(results))
+        self.write(json.dumps(await results))
 
 
 class ParallelFetchOrderBooks(BaseHandler):
@@ -131,6 +133,45 @@ class ParallelFetchOrderBooks(BaseHandler):
             symbol: order_book for symbol, order_book in zip(symbols, order_books)
         }
         return self.write(response)
+
+
+class AsyncFetchAPIHandler(tornado.websocket.WebSocketHandler):
+
+    def open(self, *args: str, **kwargs: str) -> Optional[Awaitable[None]]:
+        pass
+
+    def on_message(self, message: Union[str, bytes]) -> Optional[Awaitable[None]]:
+
+        message = json.load(message)
+        responses = []
+        for request in message:
+
+            connectors = []
+            for exchange in request['exchanges']:
+                connectors.append(Connector(exchange))
+
+            methods = []
+            for method_shema in request['methods']:
+                methods.extend(self._generateMethods(method_shema))
+
+            for conn in connectors:
+                for method in methods:
+                    responses.append(self._forwardResponse(conn, method))
+
+        return asyncio.ensure_future(asyncio.gather(*responses))
+
+    def _generateMethods(self, merhod_shema):
+        return []
+
+    async def _forwardResponse(self, conn, method):
+        await self.write_message({
+            'exchange': conn.name,
+            'method': method.signature,
+            'result': await conn.request(**method)
+        })
+
+    def close(self, code: int = None, reason: str = None) -> None:
+        pass
 
 
 def main():
