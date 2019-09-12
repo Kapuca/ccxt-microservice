@@ -23,7 +23,7 @@ class ReqObject:
         return self.method == other.method
 
     async def get(self):
-        await self.response.get()
+        return await self.response.get()
 
     def put(self, result):
         for r in self.responseList:
@@ -54,8 +54,8 @@ class Connector:
 
     def __init__(self, exchange, *args, **kwargs):
         self.name = exchange
-        self.api = getattr(ccxt, exchange)
         self.key = kwargs.get('key', None)
+        self.api = getattr(ccxt, exchange)({'apiKey': self.key, 'verbose': True})
 
         limit = BucketLimits.get(exchange, BucketLimits['default'])
         self.bucket = Bucket(**limit, startFill=limit['size'] / 2)
@@ -87,17 +87,19 @@ class Connector:
 
         try:
             response = await getattr(self.api, task.method)(*task.args, **task.kwargs)
+            task.put(response)
+            self.waitingList.remove(task)
+
         except ccxt.errors.BaseError as e:
             self._handleErrors(e)
-            # task.priority = 0
-            # await self.taskQ.put(task)
-            # await self._processTasks()
-            return
 
-        task.put(response)
-        self.waitingList.remove(task)
+        if not self.waitingList:
+            await self.api.close()
         # self.log.debug(f'Distributed {task.signature}')
 
     def _handleErrors(self, err):
         # todo handle ccxt errors
+        # task.priority = 0
+        # await self.taskQ.put(task)
+        # await self._processTasks()
         pass
