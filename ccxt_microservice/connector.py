@@ -19,8 +19,30 @@ class ReqObject:
         self.responseList = [self.response]
 
     def __eq__(self, other):
-        # todo determine when two are equivalent
-        return self.method == other.method
+        if self.method == other.method:
+
+            if len(self.args) == len(other.args):
+                for arg1, arg2 in zip(self.args, other.args):
+                    if not (arg1 == arg2):
+                        return False
+            else:
+                return False
+
+            if len(self.kwargs.keys()) == len(other.kwargs.keys()):
+                for key in self.kwargs.keys():
+                    if not (self.kwargs[key] == other.kwargs[key]):
+                        return False
+            else:
+                return False
+
+            return True
+        return False
+
+    def __gt__(self, other):
+        return self.priority > other.priority
+
+    def __lt__(self, other):
+        return self.priority < other.priority
 
     async def get(self):
         return await self.response.get()
