@@ -59,6 +59,7 @@ class Connector:
             await self.bucket.add(task.cost)
 
         try:
+            self.api.open()
             response = await getattr(self.api, task.method)(*task.args, **task.kwargs)
             task.put(response)
             self.waitingList.remove(task)
