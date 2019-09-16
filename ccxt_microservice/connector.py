@@ -2,6 +2,7 @@ import asyncio
 
 import ccxt.async_support as ccxt
 
+from ccxt_microservice.bottleneck import Bottleneck
 from ccxt_microservice.requestObject import RequestObject
 
 
@@ -11,30 +12,20 @@ class Connector:
     @classmethod
     def get_instance(cls, exchange, *args, **kwargs):
         if exchange in cls.__connectorsDict.keys():
-            for conn in cls.__connectorsDict[exchange]:
-                if conn.key == kwargs.get('key', None):
-                    return conn
-            instance = Connector(exchange, *args, **kwargs)
-            cls.__connectorsDict[exchange].append(instance)
-            return instance
-
+            return cls.__connectorsDict[exchange]
         if exchange in ccxt.exchanges:
             instance = Connector(exchange, *args, **kwargs)
-            cls.__connectorsDict[exchange] = [instance]
+            cls.__connectorsDict[exchange] = instance
             return instance
         else:
             raise NotImplementedError(f'{exchange} connector not yet implemented')
 
     def __init__(self, exchange, *args, **kwargs):
         self.name = exchange
-        self.key = kwargs.get('key', None)
-        self.api = getattr(ccxt, exchange)({'apiKey': self.key, 'verbose': True})
+        self.api: ccxt.Exchange = getattr(ccxt, exchange)({'verbose': True})
 
-        limit = BucketLimits.get(exchange, BucketLimits['default'])
-        self.bucket = Bucket(**limit, startFill=limit['size'] / 2)
+        self.bottlenecks = [Bottleneck(exchange, kwargs.get('apiKey', None))]
         self.waitingList = []
-        self.tqLock = asyncio.Lock()
-        self.taskQ = asyncio.PriorityQueue()
 
     async def request(self, method, *args, **kwargs):
         newReq = RequestObject(method, args, kwargs)
@@ -45,19 +36,15 @@ class Connector:
                 appended = True
                 break
         if not appended:
-            await self.taskQ.put(newReq)
-            asyncio.get_event_loop().create_task(self._processTasks())
+            bn = self._get_bottleneck(newReq.kwargs.get('apiKey', None))
             self.waitingList.append(newReq)
+            await bn.put(newReq)
+            asyncio.get_event_loop().create_task(self._process(bn))
         return await newReq.get()
-        # await self.bucket.add(1)
-        # return await getattr(self.api, method)(*args, **kwargs)
 
-    async def _processTasks(self):
+    async def _process(self, source):
         # self.log.debug('Waiting task...')
-        async with self.tqLock:
-            task = await self.taskQ.get()
-            await self.bucket.add(task.cost)
-
+        task = await source.get()
         try:
             self.api.open()
             response = await getattr(self.api, task.method)(*task.args, **task.kwargs)
@@ -75,5 +62,15 @@ class Connector:
         # todo handle ccxt errors
         # task.priority = 0
         # await self.taskQ.put(task)
-        # await self._processTasks()
+        # await self._process()
         pass
+
+    def _get_bottleneck(self, key):
+        bn = None
+        for bottleneck in self.bottlenecks:
+            if bottleneck.key == key:
+                bn = bottleneck
+        if not bn:
+            bn = Bottleneck(self.name, key)
+            self.bottlenecks.append(bn)
+        return bn
