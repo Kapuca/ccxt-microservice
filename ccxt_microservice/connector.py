@@ -8,17 +8,18 @@ from ccxt_microservice.requestObject import RequestObject
 class Connector:
     __connectorsDict = {}
 
-    def __new__(cls, exchange, *args, **kwargs):
+    @classmethod
+    def get_instance(cls, exchange, *args, **kwargs):
         if exchange in cls.__connectorsDict.keys():
             for conn in cls.__connectorsDict[exchange]:
                 if conn.key == kwargs.get('key', None):
                     return conn
-            instance = super().__new__(cls)
+            instance = Connector(exchange, *args, **kwargs)
             cls.__connectorsDict[exchange].append(instance)
             return instance
 
         if exchange in ccxt.exchanges:
-            instance = super().__new__(cls)
+            instance = Connector(exchange, *args, **kwargs)
             cls.__connectorsDict[exchange] = [instance]
             return instance
         else:

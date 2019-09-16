@@ -86,7 +86,7 @@ class BaseHandler(tornado.web.RequestHandler):
 class ExchangeAPIHandler(BaseHandler):
 
     async def post(self, exchange, method):
-        ex = Connector(exchange)
+        ex = Connector.get_instance(exchange)
 
         if len(self.request.body) > 0:
             request = json.loads(self.request.body)
@@ -109,11 +109,11 @@ class ParallelExchangeAPIHandler(BaseHandler):
             params = json.loads(self.request.body)
         else:
             params = {}
-        exchange = self.get_exchange(name)
-        async_callable = getattr(exchange, method)
+        exchange = Connector.get_instance(name)
 
-        results = await parallel_run(async_callable, params)
-        self.write(json.dumps(await results))
+        cors = [exchange.request(method, **param) for param in params]
+        results = await asyncio.gather(*cors)
+        self.write(json.dumps(results))
 
 
 class ParallelFetchOrderBooks(BaseHandler):
@@ -148,7 +148,7 @@ class AsyncFetchAPIHandler(tornado.websocket.WebSocketHandler):
 
             connectors = []
             for exchange in request['exchanges']:
-                connectors.append(Connector(exchange))
+                connectors.append(Connector.get_instance(exchange))
 
             methods = []
             for method_shema in request['methods']:
