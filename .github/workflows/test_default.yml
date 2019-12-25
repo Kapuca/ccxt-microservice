@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v1
+    - uses: actions/checkout@v2
     - name: Set up Python 3.7
       uses: actions/setup-python@v1
       with:
@@ -27,6 +27,8 @@ jobs:
     - name: Test with pytest
       run: |
         pip install pytest
+        pwd
+        ls -a
         cd ..
         pwd
         ls -a
