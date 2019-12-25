@@ -27,9 +27,4 @@ jobs:
     - name: Test with pytest
       run: |
         pip install pytest
-        pwd
-        ls -a
         pytest tests/unit/
-        cd ..
-        pwd
-        ls -a
